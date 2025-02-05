@@ -11,21 +11,18 @@ from datetime import datetime
 
 sns.set_theme(style="whitegrid", palette="muted")
 
-# ----- Custom CSS for a Modern, Aesthetic Look -----
+# ----- Custom CSS -----
 st.markdown("""
     <style>
-    /* Overall app background and font */
     .reportview-container {
         background: linear-gradient(135deg, #f5f7fa, #c3cfe2);
         font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
         color: #2c3e50;
     }
-    /* Headings styling */
     h1, h2, h3, h4, h5, h6 {
         color: #34495e;
         font-weight: 600;
     }
-    /* Top dashboard container */
     .input-dashboard {
         background: #ffffff;
         padding: 20px;
@@ -33,7 +30,6 @@ st.markdown("""
         border-radius: 10px;
         box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
     }
-    /* Button styling */
     .stButton>button {
         background-color: #3498db;
         color: white;
@@ -45,7 +41,6 @@ st.markdown("""
     .stButton>button:hover {
         background-color: #2980b9;
     }
-    /* Card styling */
     .card {
         background-color: #ffffff;
         padding: 20px;
@@ -77,13 +72,11 @@ def display_metric_card(title, value, unit="$", value_color="#27ae60"):
     st.markdown(card_html, unsafe_allow_html=True)
 
 def display_metric_cards(metrics_dict, cols=3):
-    """Display a dictionary of metrics in aligned cards using st.columns."""
     keys = list(metrics_dict.keys())
     for i in range(0, len(keys), cols):
         cols_container = st.columns(cols)
         for j, key in enumerate(keys[i:i+cols]):
             value = metrics_dict[key]
-            # Choose a color based on key or position (customize as needed)
             color = "#27ae60" if j % 2 == 0 else "#2980b9"
             cols_container[j].markdown(f"**{key}:**")
             cols_container[j].markdown(f"<div class='card'><h1 style='color: {color};'>{value:,.2f}</h1></div>", unsafe_allow_html=True)
@@ -99,26 +92,14 @@ def display_ev_comparison(calculated_ev, market_cap):
     with col3:
         display_metric_card("Difference", delta, unit="", value_color=delta_color)
 
-def display_additional_metrics(metrics):
-    html = "<div class='card'>"
-    for key, value in metrics.items():
-        if isinstance(value, (float, int)):
-            value_str = f"{value:,.2f}"
-        else:
-            value_str = str(value)
-        html += f"<p style='font-size:16px;'><strong>{key}:</strong> {value_str}</p>"
-    html += "</div>"
-    st.markdown(html, unsafe_allow_html=True)
-
 # ----- Data Retrieval Functions -----
 
 def fetch_latest_fcf(ticker):
     stock = yf.Ticker(ticker)
-    cashflow = stock.cashflow
     try:
-        latest_fcf = cashflow.loc['Free Cash Flow'].iloc[0]
+        latest_fcf = stock.cashflow.loc['Free Cash Flow'].iloc[0]
     except Exception as e:
-        st.error(f"Error retrieving FCF data for {ticker}: {e}")
+        st.error(f"Error retrieving FCF for {ticker}: {e}")
         return None
     return latest_fcf
 
@@ -160,17 +141,13 @@ def fetch_historical_prices(ticker, period="1y"):
     try:
         hist = stock.history(period=period)
     except Exception as e:
-        st.error(f"Error retrieving historical data for {ticker}: {e}")
+        st.error(f"Error retrieving historical prices for {ticker}: {e}")
         return None
     return hist
 
 # ----- Historical FCF Values -----
 
 def get_last_five_fcf(ticker):
-    """
-    Returns a DataFrame containing up to the last five FCF values.
-    Checks quarterly cashflow data first; if unavailable, falls back to annual.
-    """
     stock = yf.Ticker(ticker)
     if hasattr(stock, "quarterly_cashflow"):
         cf = stock.quarterly_cashflow
@@ -207,7 +184,7 @@ def simple_dcf(latest_fcf, discount_rate=0.1, forecast_years=5, fcf_growth=0.05,
     elif terminal_method == "Exit Multiple":
         terminal_value = last_fcf * exit_multiple
     else:
-        raise ValueError("Invalid terminal method selected.")
+        raise ValueError("Invalid terminal method.")
     pv_terminal = terminal_value / ((1 + discount_rate) ** forecast_years)
     enterprise_value = sum(pv_fcfs) + pv_terminal
     return enterprise_value, projected_fcfs, pv_fcfs, terminal_value, pv_terminal
@@ -240,16 +217,16 @@ def monte_carlo_dcf(latest_fcf, base_discount_rate, forecast_years, base_fcf_gro
                     iterations=1000, discount_rate_std=0.005, fcf_growth_std=0.005, terminal_growth_std=0.002):
     evs = []
     for _ in range(iterations):
-        discount_rate_sample = np.random.normal(base_discount_rate, discount_rate_std)
+        dr_sample = np.random.normal(base_discount_rate, discount_rate_std)
         fcf_growth_sample = np.random.normal(base_fcf_growth, fcf_growth_std)
-        terminal_growth_sample = np.random.normal(base_terminal_growth, terminal_growth_std)
+        tg_sample = np.random.normal(base_terminal_growth, terminal_growth_std)
         try:
             ev, _, _, _, _ = simple_dcf(latest_fcf,
-                                        discount_rate=discount_rate_sample,
+                                        discount_rate=dr_sample,
                                         forecast_years=forecast_years,
                                         fcf_growth=fcf_growth_sample,
                                         terminal_method=terminal_method,
-                                        terminal_growth=terminal_growth_sample,
+                                        terminal_growth=tg_sample,
                                         exit_multiple=exit_multiple)
             evs.append(ev)
         except Exception:
@@ -321,27 +298,25 @@ def nav_valuation(ticker):
         return None
     return total_assets - total_liab
 
+# ----- New Modules from Balance Sheet Data -----
+
 def balance_sheet_analysis(ticker):
-    """
-    Returns a dictionary of balance sheet–derived metrics.
-    """
     bs = fetch_balance_sheet(ticker)
     if bs is None:
         return None
     analysis = {}
-    # Total Assets
+    # Total Assets & Liabilities
     if "Total Assets" in bs.index:
         analysis["Total Assets"] = bs.loc["Total Assets"].iloc[0]
     elif "totalAssets" in bs.index:
         analysis["Total Assets"] = bs.loc["totalAssets"].iloc[0]
-    # Total Liabilities
     if "Total Liabilities Net Minority Interest" in bs.index:
         analysis["Total Liabilities"] = bs.loc["Total Liabilities Net Minority Interest"].iloc[0]
     elif "Total Liab" in bs.index:
         analysis["Total Liabilities"] = bs.loc["Total Liab"].iloc[0]
     elif "totalLiab" in bs.index:
         analysis["Total Liabilities"] = bs.loc["totalLiab"].iloc[0]
-    # Stockholders' Equity
+    # Equity
     if "Stockholders Equity" in bs.index:
         analysis["Stockholders Equity"] = bs.loc["Stockholders Equity"].iloc[0]
     elif "Common Stock Equity" in bs.index:
@@ -372,22 +347,20 @@ def balance_sheet_analysis(ticker):
         if "Cash And Cash Equivalents And Short Term Investments" in bs.index and "Total Debt" in analysis:
             cash = bs.loc["Cash And Cash Equivalents And Short Term Investments"].iloc[0]
             analysis["Net Debt"] = analysis["Total Debt"] - cash
-    # Debt-to-Equity Ratio
+    # Leverage ratios
     if "Total Debt" in analysis and "Stockholders Equity" in analysis and analysis["Stockholders Equity"] != 0:
         analysis["Debt-to-Equity Ratio"] = analysis["Total Debt"] / analysis["Stockholders Equity"]
     else:
         analysis["Debt-to-Equity Ratio"] = None
-    # Debt-to-Asset Ratio
     if "Total Liabilities" in analysis and "Total Assets" in analysis and analysis["Total Assets"] != 0:
         analysis["Debt-to-Asset Ratio"] = analysis["Total Liabilities"] / analysis["Total Assets"]
     else:
         analysis["Debt-to-Asset Ratio"] = None
-    # Equity Ratio
     if "Stockholders Equity" in analysis and "Total Assets" in analysis and analysis["Total Assets"] != 0:
         analysis["Equity Ratio"] = analysis["Stockholders Equity"] / analysis["Total Assets"]
     else:
         analysis["Equity Ratio"] = None
-    # Per Share Metrics using shares outstanding
+    # Per share metrics
     stock = yf.Ticker(ticker)
     info = stock.info
     shares = info.get("sharesOutstanding", None)
@@ -398,6 +371,101 @@ def balance_sheet_analysis(ticker):
         if "Tangible Book Value" in analysis and analysis["Tangible Book Value"] is not None:
             analysis["Tangible Book Value Per Share"] = analysis["Tangible Book Value"] / shares
     return analysis
+
+# ----- EVA Calculator -----
+
+def eva_calculator(ticker, discount_rate, tax_rate):
+    # Estimate NOPAT from EBIT * (1 - tax_rate)
+    fin = fetch_financials(ticker)
+    if fin is None or "Ebit" not in fin.index:
+        return None
+    EBIT = fin.loc["Ebit"].iloc[0]
+    NOPAT = EBIT * (1 - tax_rate)
+    # Invested Capital: Approximate as Stockholders' Equity + Total Debt - Cash
+    bs = fetch_balance_sheet(ticker)
+    if bs is None:
+        return None
+    if "Stockholders Equity" in bs.index:
+        equity = bs.loc["Stockholders Equity"].iloc[0]
+    elif "Common Stock Equity" in bs.index:
+        equity = bs.loc["Common Stock Equity"].iloc[0]
+    else:
+        return None
+    if "Total Debt" in bs.index:
+        total_debt = bs.loc["Total Debt"].iloc[0]
+    elif "totalDebt" in bs.index:
+        total_debt = bs.loc["totalDebt"].iloc[0]
+    else:
+        total_debt = 0
+    if "Cash And Cash Equivalents And Short Term Investments" in bs.index:
+        cash = bs.loc["Cash And Cash Equivalents And Short Term Investments"].iloc[0]
+    else:
+        cash = 0
+    invested_capital = equity + total_debt - cash
+    eva = NOPAT - (invested_capital * discount_rate)
+    return eva, NOPAT, invested_capital
+
+# ----- ROIC vs. WACC Analysis -----
+
+def roic_analysis(ticker, discount_rate, tax_rate):
+    fin = fetch_financials(ticker)
+    if fin is None or "Ebit" not in fin.index:
+        return None
+    EBIT = fin.loc["Ebit"].iloc[0]
+    NOPAT = EBIT * (1 - tax_rate)
+    bs = fetch_balance_sheet(ticker)
+    if bs is None:
+        return None
+    if "Stockholders Equity" in bs.index:
+        equity = bs.loc["Stockholders Equity"].iloc[0]
+    elif "Common Stock Equity" in bs.index:
+        equity = bs.loc["Common Stock Equity"].iloc[0]
+    else:
+        return None
+    if "Total Debt" in bs.index:
+        total_debt = bs.loc["Total Debt"].iloc[0]
+    elif "totalDebt" in bs.index:
+        total_debt = bs.loc["totalDebt"].iloc[0]
+    else:
+        total_debt = 0
+    if "Cash And Cash Equivalents And Short Term Investments" in bs.index:
+        cash = bs.loc["Cash And Cash Equivalents And Short Term Investments"].iloc[0]
+    else:
+        cash = 0
+    invested_capital = equity + total_debt - cash
+    if invested_capital == 0:
+        return None
+    ROIC = NOPAT / invested_capital
+    return ROIC, discount_rate
+
+# ----- Historical Trends Analysis -----
+
+def historical_trends_analysis(ticker):
+    stock = yf.Ticker(ticker)
+    # Use financials for Total Revenue and Net Income
+    fin = stock.financials
+    trends = {}
+    if fin is not None:
+        if "Total Revenue" in fin.index:
+            trends["Total Revenue"] = fin.loc["Total Revenue"]
+        if "Net Income" in fin.index:
+            trends["Net Income"] = fin.loc["Net Income"]
+    # Use cashflow for Free Cash Flow
+    cf = stock.cashflow
+    if cf is not None and "Free Cash Flow" in cf.index:
+        trends["Free Cash Flow"] = cf.loc["Free Cash Flow"]
+    # Convert DataFrames to a combined DataFrame (transpose for plotting)
+    df_list = []
+    for key, df in trends.items():
+        temp = df.transpose()
+        temp = temp.rename(columns={df.index[0]: key})  # Rename first row to metric name
+        df_list.append(temp)
+    if df_list:
+        combined = pd.concat(df_list, axis=1)
+        combined.index = combined.index.strftime("%Y-%m-%d")
+        return combined
+    else:
+        return None
 
 # ----- Utility Functions for PDF Export -----
 
@@ -426,15 +494,27 @@ def generate_pdf_report(report_data, chart_images):
         pdf.cell(0, 10, "Balance Sheet Analysis:", ln=True)
         for key, value in report_data["BalanceSheet"].items():
             pdf.cell(0, 10, f"{key}: {value}", ln=True)
+    if report_data.get("PeerComparison"):
+        pdf.cell(0, 10, "Peer Comparison:", ln=True)
+        for idx, row in report_data["PeerComparison"].iterrows():
+            pdf.cell(0, 10, f"{row['Ticker']}: P/E {row['P/E']}, EV/EBITDA {row['EV/EBITDA']}", ln=True)
+    if report_data.get("EVA"):
+        pdf.cell(0, 10, f"EVA: ${report_data['EVA']:,.2f}", ln=True)
+    if report_data.get("ROIC"):
+        pdf.cell(0, 10, f"ROIC: {report_data['ROIC']*100:.2f}%", ln=True)
     if report_data.get("Market Cap"):
         pdf.cell(0, 10, f"Market Cap: ${report_data['Market Cap']:,.2f}", ln=True)
     if report_data.get("Difference"):
         pdf.cell(0, 10, f"Difference (DCF EV - Market Cap): ${report_data['Difference']:,.2f}", ln=True)
     pdf.ln(10)
+    # Optionally embed charts (if chart_images is a dict of BytesIO images)
     for title, img in chart_images.items():
         pdf.cell(0, 10, title, ln=True)
-        img.seek(0)
-        pdf.image(img, w=pdf.w - 40)
+        # Save temporary image file since FPDF expects a filepath
+        temp_filename = f"temp_{title}.png"
+        with open(temp_filename, "wb") as f:
+            f.write(img.getvalue())
+        pdf.image(temp_filename, w=pdf.w - 40)
         pdf.ln(10)
     pdf_output = pdf.output(dest="S").encode("latin1")
     return pdf_output
@@ -473,6 +553,12 @@ with st.container():
     with col10:
         monte_carlo_enabled = st.checkbox("Run Monte Carlo Simulation", value=False)
     
+    # Peer Comparison input: comma-separated tickers
+    peer_input = st.text_input("Peer Tickers (comma separated)", value="MSFT,GOOGL,AMZN")
+    
+    # For EVA and ROIC modules, user-specified tax rate
+    tax_rate = st.number_input("Effective Tax Rate (for EVA/ROIC)", min_value=0.0, max_value=1.0, value=0.21, step=0.01)
+    
     if monte_carlo_enabled:
         col_mc1, col_mc2, col_mc3 = st.columns(3)
         with col_mc1:
@@ -484,7 +570,11 @@ with st.container():
             terminal_growth_std = st.number_input("Terminal Growth Std Dev", value=0.002, step=0.001)
 
 # ----- Tabs for Modules -----
-tabs = st.tabs(["DCF", "Multiples", "DDM", "Balance Sheet Analysis", "EPV", "NAV", "Consensus Report"])
+tabs = st.tabs([
+    "DCF", "Multiples", "DDM", "Balance Sheet Analysis", 
+    "EPV", "NAV", "Peer Comparison", "EVA Calculator", 
+    "ROIC vs WACC", "Historical Trends", "Consensus Report"
+])
 
 # ----- DCF Tab -----
 with tabs[0]:
@@ -624,7 +714,6 @@ with tabs[3]:
         df_bs = pd.DataFrame.from_dict(bs_data, orient='index', columns=["Value"])
         st.table(df_bs)
         st.markdown("#### Key Metrics")
-        # Display key metrics in aligned cards
         key_metrics = {
             "Total Assets": bs_data.get("Total Assets", None),
             "Total Liabilities": bs_data.get("Total Liabilities", None),
@@ -637,10 +726,8 @@ with tabs[3]:
             "Book Value Per Share": bs_data.get("Book Value Per Share", None),
             "Tangible Book Value Per Share": bs_data.get("Tangible Book Value Per Share", None)
         }
-        # Filter out None values for display
         key_metrics = {k: v for k, v in key_metrics.items() if v is not None}
         display_metric_cards(key_metrics, cols=3)
-        # Bar graph for Assets, Liabilities, and Equity
         if bs_data.get("Total Assets") and bs_data.get("Total Liabilities") and bs_data.get("Stockholders Equity"):
             df_bar = pd.DataFrame({
                 "Category": ["Total Assets", "Total Liabilities", "Stockholders Equity"],
@@ -672,8 +759,73 @@ with tabs[5]:
     else:
         st.warning("NAV calculation not available. Ensure balance sheet data is complete.")
 
-# ----- Consensus Report Tab -----
+# ----- Peer Comparison Tab -----
 with tabs[6]:
+    st.markdown("### Peer Comparison Dashboard")
+    peers_input = st.text_input("Enter Peer Tickers (comma separated)", value="MSFT,GOOGL,AMZN")
+    peer_list = [p.strip().upper() for p in peers_input.split(",") if p.strip()]
+    if peer_list:
+        data = []
+        for p in peer_list:
+            m = multiples_analysis(p)
+            if m:
+                row = {"Ticker": p}
+                row.update(m)
+                data.append(row)
+        if data:
+            df_peers = pd.DataFrame(data)
+            st.table(df_peers)
+            # Example: Scatter plot comparing P/E and EV/EBITDA
+            if "P/E" in df_peers.columns and "EV/EBITDA" in df_peers.columns:
+                fig_peer = px.scatter(df_peers, x="P/E", y="EV/EBITDA", text="Ticker", title="Peer Comparison: P/E vs EV/EBITDA", template="plotly_white")
+                st.plotly_chart(fig_peer)
+        else:
+            st.warning("No data available for peers.")
+    else:
+        st.warning("Please enter at least one peer ticker.")
+
+# ----- EVA Calculator Tab -----
+with tabs[7]:
+    st.markdown("### Economic Value Added (EVA) Calculator")
+    tax_rate = st.number_input("Effective Tax Rate", min_value=0.0, max_value=1.0, value=0.21, step=0.01)
+    eva_result = eva_calculator(ticker, discount_rate, tax_rate)
+    if eva_result:
+        eva, nopat, invested_capital = eva_result
+        st.markdown(f"**NOPAT:** ${nopat:,.2f}")
+        st.markdown(f"**Invested Capital:** ${invested_capital:,.2f}")
+        st.markdown(f"**EVA:** ${eva:,.2f}")
+        display_metric_card("EVA", eva)
+    else:
+        st.warning("EVA calculation not available. Ensure financial and balance sheet data are complete.")
+
+# ----- ROIC vs WACC Tab -----
+with tabs[8]:
+    st.markdown("### ROIC vs. WACC Analysis")
+    roic_result = roic_analysis(ticker, discount_rate, tax_rate)
+    if roic_result:
+        roic, wacc = roic_result
+        st.markdown(f"**ROIC:** {roic*100:.2f}%")
+        st.markdown(f"**WACC:** {wacc*100:.2f}%")
+        # Display a bar chart for comparison
+        df_roic = pd.DataFrame({"Metric": ["ROIC", "WACC"], "Value": [roic*100, wacc*100]})
+        fig_roic = px.bar(df_roic, x="Metric", y="Value", title="ROIC vs. WACC (%)", color="Metric", template="plotly_white")
+        st.plotly_chart(fig_roic)
+        display_metric_card("ROIC", roic*100, unit="", value_color="#27ae60")
+    else:
+        st.warning("ROIC calculation not available. Ensure necessary data are complete.")
+
+# ----- Historical Trends Tab -----
+with tabs[9]:
+    st.markdown("### Historical Trends Analysis")
+    trends_df = historical_trends_analysis(ticker)
+    if trends_df is not None and not trends_df.empty:
+        st.line_chart(trends_df)
+        st.table(trends_df)
+    else:
+        st.warning("Historical trends data not available.")
+
+# ----- Consensus Report Tab -----
+with tabs[10]:
     st.markdown("### Consensus Valuation Report")
     report_data = {}
     report_data["ticker"] = ticker
@@ -683,6 +835,15 @@ with tabs[6]:
     report_data["NAV"] = nav_val if nav_val else None
     bs_data = balance_sheet_analysis(ticker)
     report_data["BalanceSheet"] = bs_data if bs_data else None
+    # Peer Comparison average (optional, here we take the mean of available P/E for peers)
+    if peer_list:
+        peer_data = []
+        for p in peer_list:
+            m = multiples_analysis(p)
+            if m and m.get("P/E"):
+                peer_data.append(m["P/E"])
+        if peer_data:
+            report_data["Peer Avg P/E"] = np.mean(peer_data)
     stock = yf.Ticker(ticker)
     info = stock.info
     market_cap = info.get("marketCap", None)
@@ -691,12 +852,13 @@ with tabs[6]:
         report_data["Difference"] = dcf_value - market_cap
     st.markdown("#### Summary of Valuation Metrics")
     consensus_df = pd.DataFrame({
-        "Method": ["DCF", "DDM", "EPV", "NAV", "Market Cap"],
-        "Value": [report_data["DCF"], report_data["DDM"], report_data["EPV"], report_data["NAV"], report_data["Market Cap"]]
+        "Method": ["DCF", "DDM", "EPV", "NAV", "Market Cap", "Peer Avg P/E"],
+        "Value": [report_data["DCF"], report_data["DDM"], report_data["EPV"], report_data["NAV"], report_data["Market Cap"], report_data.get("Peer Avg P/E", "N/A")]
     })
     st.table(consensus_df)
     if market_cap and dcf_value:
         st.markdown(f"**Difference (DCF EV - Market Cap):** ${report_data['Difference']:,.2f}")
+    # Generate PDF including Balance Sheet Analysis
     if st.button("Generate PDF Report"):
-        pdf_bytes = generate_pdf_report(report_data, {})  # Optionally attach charts here
+        pdf_bytes = generate_pdf_report(report_data, {})  # Optionally attach charts
         st.download_button("Download PDF Report", data=pdf_bytes, file_name="Consensus_Report.pdf", mime="application/pdf")
