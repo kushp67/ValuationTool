@@ -11,7 +11,7 @@ from datetime import datetime
 
 sns.set_theme(style="whitegrid", palette="muted")
 
-# ----- Custom CSS -----
+# ----- Custom CSS for a Modern, Aesthetic Look -----
 st.markdown("""
     <style>
     .reportview-container {
@@ -298,8 +298,6 @@ def nav_valuation(ticker):
         return None
     return total_assets - total_liab
 
-# ----- New Modules from Balance Sheet Data -----
-
 def balance_sheet_analysis(ticker):
     bs = fetch_balance_sheet(ticker)
     if bs is None:
@@ -372,16 +370,12 @@ def balance_sheet_analysis(ticker):
             analysis["Tangible Book Value Per Share"] = analysis["Tangible Book Value"] / shares
     return analysis
 
-# ----- EVA Calculator -----
-
 def eva_calculator(ticker, discount_rate, tax_rate):
-    # Estimate NOPAT from EBIT * (1 - tax_rate)
     fin = fetch_financials(ticker)
     if fin is None or "Ebit" not in fin.index:
         return None
     EBIT = fin.loc["Ebit"].iloc[0]
     NOPAT = EBIT * (1 - tax_rate)
-    # Invested Capital: Approximate as Stockholders' Equity + Total Debt - Cash
     bs = fetch_balance_sheet(ticker)
     if bs is None:
         return None
@@ -404,8 +398,6 @@ def eva_calculator(ticker, discount_rate, tax_rate):
     invested_capital = equity + total_debt - cash
     eva = NOPAT - (invested_capital * discount_rate)
     return eva, NOPAT, invested_capital
-
-# ----- ROIC vs. WACC Analysis -----
 
 def roic_analysis(ticker, discount_rate, tax_rate):
     fin = fetch_financials(ticker)
@@ -438,11 +430,8 @@ def roic_analysis(ticker, discount_rate, tax_rate):
     ROIC = NOPAT / invested_capital
     return ROIC, discount_rate
 
-# ----- Historical Trends Analysis -----
-
 def historical_trends_analysis(ticker):
     stock = yf.Ticker(ticker)
-    # Use financials for Total Revenue and Net Income
     fin = stock.financials
     trends = {}
     if fin is not None:
@@ -450,19 +439,17 @@ def historical_trends_analysis(ticker):
             trends["Total Revenue"] = fin.loc["Total Revenue"]
         if "Net Income" in fin.index:
             trends["Net Income"] = fin.loc["Net Income"]
-    # Use cashflow for Free Cash Flow
     cf = stock.cashflow
     if cf is not None and "Free Cash Flow" in cf.index:
         trends["Free Cash Flow"] = cf.loc["Free Cash Flow"]
-    # Convert DataFrames to a combined DataFrame (transpose for plotting)
     df_list = []
-    for key, df in trends.items():
-        temp = df.transpose()
-        temp = temp.rename(columns={df.index[0]: key})  # Rename first row to metric name
+    for key, series in trends.items():
+        # Convert series to a DataFrame with one column named as the metric
+        temp = series.to_frame(name=key)
         df_list.append(temp)
     if df_list:
         combined = pd.concat(df_list, axis=1)
-        combined.index = combined.index.strftime("%Y-%m-%d")
+        combined.index = pd.to_datetime(combined.index).strftime("%Y-%m-%d")
         return combined
     else:
         return None
@@ -494,7 +481,7 @@ def generate_pdf_report(report_data, chart_images):
         pdf.cell(0, 10, "Balance Sheet Analysis:", ln=True)
         for key, value in report_data["BalanceSheet"].items():
             pdf.cell(0, 10, f"{key}: {value}", ln=True)
-    if report_data.get("PeerComparison"):
+    if report_data.get("PeerComparison") is not None:
         pdf.cell(0, 10, "Peer Comparison:", ln=True)
         for idx, row in report_data["PeerComparison"].iterrows():
             pdf.cell(0, 10, f"{row['Ticker']}: P/E {row['P/E']}, EV/EBITDA {row['EV/EBITDA']}", ln=True)
@@ -507,15 +494,15 @@ def generate_pdf_report(report_data, chart_images):
     if report_data.get("Difference"):
         pdf.cell(0, 10, f"Difference (DCF EV - Market Cap): ${report_data['Difference']:,.2f}", ln=True)
     pdf.ln(10)
-    # Optionally embed charts (if chart_images is a dict of BytesIO images)
+    # Embed charts by writing temporary files (FPDF needs file paths)
+    import tempfile
     for title, img in chart_images.items():
         pdf.cell(0, 10, title, ln=True)
-        # Save temporary image file since FPDF expects a filepath
-        temp_filename = f"temp_{title}.png"
-        with open(temp_filename, "wb") as f:
-            f.write(img.getvalue())
-        pdf.image(temp_filename, w=pdf.w - 40)
-        pdf.ln(10)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmpfile:
+            tmpfile.write(img.getvalue())
+            tmpfile.flush()
+            pdf.image(tmpfile.name, w=pdf.w - 40)
+            pdf.ln(10)
     pdf_output = pdf.output(dest="S").encode("latin1")
     return pdf_output
 
@@ -553,10 +540,9 @@ with st.container():
     with col10:
         monte_carlo_enabled = st.checkbox("Run Monte Carlo Simulation", value=False)
     
-    # Peer Comparison input: comma-separated tickers
+    # Peer Comparison input
     peer_input = st.text_input("Peer Tickers (comma separated)", value="MSFT,GOOGL,AMZN")
-    
-    # For EVA and ROIC modules, user-specified tax rate
+    # EVA and ROIC tax rate input
     tax_rate = st.number_input("Effective Tax Rate (for EVA/ROIC)", min_value=0.0, max_value=1.0, value=0.21, step=0.01)
     
     if monte_carlo_enabled:
@@ -571,9 +557,9 @@ with st.container():
 
 # ----- Tabs for Modules -----
 tabs = st.tabs([
-    "DCF", "Multiples", "DDM", "Balance Sheet Analysis", 
-    "EPV", "NAV", "Peer Comparison", "EVA Calculator", 
-    "ROIC vs WACC", "Historical Trends", "Consensus Report"
+    "DCF", "Multiples", "DDM", "Balance Sheet Analysis", "EPV", 
+    "NAV", "Peer Comparison", "EVA Calculator", "ROIC vs WACC", 
+    "Historical Trends", "Consensus Report"
 ])
 
 # ----- DCF Tab -----
@@ -775,7 +761,6 @@ with tabs[6]:
         if data:
             df_peers = pd.DataFrame(data)
             st.table(df_peers)
-            # Example: Scatter plot comparing P/E and EV/EBITDA
             if "P/E" in df_peers.columns and "EV/EBITDA" in df_peers.columns:
                 fig_peer = px.scatter(df_peers, x="P/E", y="EV/EBITDA", text="Ticker", title="Peer Comparison: P/E vs EV/EBITDA", template="plotly_white")
                 st.plotly_chart(fig_peer)
@@ -787,7 +772,6 @@ with tabs[6]:
 # ----- EVA Calculator Tab -----
 with tabs[7]:
     st.markdown("### Economic Value Added (EVA) Calculator")
-    tax_rate = st.number_input("Effective Tax Rate", min_value=0.0, max_value=1.0, value=0.21, step=0.01)
     eva_result = eva_calculator(ticker, discount_rate, tax_rate)
     if eva_result:
         eva, nopat, invested_capital = eva_result
@@ -806,7 +790,6 @@ with tabs[8]:
         roic, wacc = roic_result
         st.markdown(f"**ROIC:** {roic*100:.2f}%")
         st.markdown(f"**WACC:** {wacc*100:.2f}%")
-        # Display a bar chart for comparison
         df_roic = pd.DataFrame({"Metric": ["ROIC", "WACC"], "Value": [roic*100, wacc*100]})
         fig_roic = px.bar(df_roic, x="Metric", y="Value", title="ROIC vs. WACC (%)", color="Metric", template="plotly_white")
         st.plotly_chart(fig_roic)
@@ -835,7 +818,7 @@ with tabs[10]:
     report_data["NAV"] = nav_val if nav_val else None
     bs_data = balance_sheet_analysis(ticker)
     report_data["BalanceSheet"] = bs_data if bs_data else None
-    # Peer Comparison average (optional, here we take the mean of available P/E for peers)
+    # For peer comparison, take average P/E if available:
     if peer_list:
         peer_data = []
         for p in peer_list:
@@ -850,6 +833,11 @@ with tabs[10]:
     report_data["Market Cap"] = market_cap
     if market_cap and dcf_value:
         report_data["Difference"] = dcf_value - market_cap
+    if st.button("Generate PDF Report"):
+        # For demonstration, we create a dummy chart_images dict (you can attach real charts)
+        chart_images = {}
+        pdf_bytes = generate_pdf_report(report_data, chart_images)
+        st.download_button("Download PDF Report", data=pdf_bytes, file_name="Consensus_Report.pdf", mime="application/pdf")
     st.markdown("#### Summary of Valuation Metrics")
     consensus_df = pd.DataFrame({
         "Method": ["DCF", "DDM", "EPV", "NAV", "Market Cap", "Peer Avg P/E"],
@@ -858,7 +846,3 @@ with tabs[10]:
     st.table(consensus_df)
     if market_cap and dcf_value:
         st.markdown(f"**Difference (DCF EV - Market Cap):** ${report_data['Difference']:,.2f}")
-    # Generate PDF including Balance Sheet Analysis
-    if st.button("Generate PDF Report"):
-        pdf_bytes = generate_pdf_report(report_data, {})  # Optionally attach charts
-        st.download_button("Download PDF Report", data=pdf_bytes, file_name="Consensus_Report.pdf", mime="application/pdf")
